@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Confirm Sub-Account{% endblock %}
+{% block content %}
+<div class="box">
+  <div class="box-title">Confirm New Sub-Account</div>
+  <p>Please review the details before submitting.</p>
+  <table class="form-table">
+    <tr><td class="lbl">Member:</td><td>{{ member.name }} ({{ member_id }})</td></tr>
+    <tr><td class="lbl">Account Type:</td><td>{{ account_type }}</td></tr>
+    <tr><td class="lbl">Initial Deposit:</td><td>${{ initial_deposit }}</td></tr>
+    <tr><td class="lbl">Purpose:</td><td>{{ purpose }}</td></tr>
+  </table>
+  <br>
+  <form method="POST" action="/members/{{ member_id }}/sub-account/confirm">
+    <input type="hidden" name="account_type" value="{{ account_type }}">
+    <input type="hidden" name="initial_deposit" value="{{ initial_deposit }}">
+    <input type="hidden" name="purpose" value="{{ purpose }}">
+    <input type="submit" class="btn" value="Confirm and Open Account">
+    &nbsp;
+    <a href="/members/{{ member_id }}/sub-account" class="btn-sm">Back</a>
+  </form>
+</div>
+{% endblock %}

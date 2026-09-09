@@ -1,0 +1,15 @@
+{"ts": "2025-09-09T12:07:01.001Z", "run_id": "replay", "event": "run_start", "goal": "Log in and look up member 12345, then read their savings account balance", "params": {"member_id": "99999"}}
+{"ts": "2025-09-09T12:07:01.212Z", "run_id": "replay", "event": "step_start", "step_id": "step_01_navigate", "description": "Navigate to the login page", "action": "navigate"}
+{"ts": "2025-09-09T12:07:02.341Z", "run_id": "replay", "event": "step_success", "step_id": "step_01_navigate", "extracted": null}
+{"ts": "2025-09-09T12:07:02.512Z", "run_id": "replay", "event": "step_start", "step_id": "step_02_type_text", "description": "Type username into the Username field", "action": "type"}
+{"ts": "2025-09-09T12:07:02.923Z", "run_id": "replay", "event": "step_success", "step_id": "step_02_type_text", "extracted": null}
+{"ts": "2025-09-09T12:07:03.012Z", "run_id": "replay", "event": "step_start", "step_id": "step_03_type_text", "description": "Type password into the Password field", "action": "type"}
+{"ts": "2025-09-09T12:07:03.341Z", "run_id": "replay", "event": "step_success", "step_id": "step_03_type_text", "extracted": null}
+{"ts": "2025-09-09T12:07:03.512Z", "run_id": "replay", "event": "step_start", "step_id": "step_04_click", "description": "Click the Log In button to submit credentials", "action": "click"}
+{"ts": "2025-09-09T12:07:04.892Z", "run_id": "replay", "event": "step_success", "step_id": "step_04_click", "extracted": null}
+{"ts": "2025-09-09T12:07:05.012Z", "run_id": "replay", "event": "step_start", "step_id": "step_05_navigate", "description": "Navigate to the member search page", "action": "navigate"}
+{"ts": "2025-09-09T12:07:05.723Z", "run_id": "replay", "event": "step_success", "step_id": "step_05_navigate", "extracted": null}
+{"ts": "2025-09-09T12:07:05.901Z", "run_id": "replay", "event": "step_start", "step_id": "step_06_type_text", "description": "Enter the member ID into the search field", "action": "type"}
+{"ts": "2025-09-09T12:07:06.112Z", "run_id": "replay", "event": "step_success", "step_id": "step_06_type_text", "extracted": null}
+{"ts": "2025-09-09T12:07:06.312Z", "run_id": "replay", "event": "step_start", "step_id": "step_07_click", "description": "Click the Search button to submit the member ID search", "action": "click"}
+{"ts": "2025-09-09T12:07:07.534Z", "run_id": "replay", "event": "business_outcome", "code": "member_not_found", "description": "The requested member was not found"}

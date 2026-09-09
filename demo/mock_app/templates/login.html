@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Log In{% endblock %}
+{% block content %}
+<br>
+<div class="box" style="max-width:360px;">
+  <div class="box-title">Staff Login</div>
+  {% if error %}<p class="msg-error">{{ error }}</p>{% endif %}
+  <form method="POST" action="/login">
+    <table class="form-table">
+      <tr>
+        <td class="lbl"><label for="username">Username:</label></td>
+        <td><input type="text" name="username" id="username" size="22" autocomplete="username"></td>
+      </tr>
+      <tr>
+        <td class="lbl"><label for="password">Password:</label></td>
+        <td><input type="password" name="password" id="password" size="22" autocomplete="current-password"></td>
+      </tr>
+      <tr>
+        <td></td>
+        <td style="padding-top:8px;"><input type="submit" class="btn" value="Log In"></td>
+      </tr>
+    </table>
+  </form>
+  <p style="font-size:11px;color:#666;">Demo credentials: demo / demo123</p>
+</div>
+{% endblock %}

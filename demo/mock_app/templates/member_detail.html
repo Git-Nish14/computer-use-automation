@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Member Detail{% endblock %}
+{% block content %}
+<div class="box">
+  <div class="box-title">Member Information — ID: {{ member_id }}</div>
+  <table class="form-table">
+    <tr><td class="lbl">Name:</td><td>{{ member.name }}</td></tr>
+    <tr><td class="lbl">Date of Birth:</td><td>{{ member.dob }}</td></tr>
+    <tr><td class="lbl">Address:</td><td>{{ member.address }}</td></tr>
+    <tr><td class="lbl">Phone:</td><td>{{ member.phone }}</td></tr>
+  </table>
+</div>
+
+<div class="box">
+  <div class="box-title">Accounts</div>
+  <table class="accounts-table">
+    <thead>
+      <tr>
+        <th>Account Type</th>
+        <th>Account Number</th>
+        <th style="text-align:right;">Current Balance</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for acct in member.accounts %}
+      <tr>
+        <td>{{ acct.type }}</td>
+        <td>{{ acct.number }}</td>
+        <td class="balance-cell">${{ "%.2f"|format(acct.balance) }}</td>
+        <td>{{ acct.status }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <br>
+  <a href="/members/{{ member_id }}/sub-account" class="btn">Open New Sub-Account</a>
+</div>
+
+<p><a href="/members/search">&laquo; Back to Search</a></p>
+{% endblock %}

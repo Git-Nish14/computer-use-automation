@@ -1,0 +1,34 @@
+[project]
+name = "computer-use-automation"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "openai>=1.50.0",
+    "playwright>=1.40.0",
+    "pydantic>=2.0.0",
+    "flask>=3.0.0",
+    "click>=8.0.0",
+    "rich>=13.0.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-playwright>=0.5.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["cua", "demo"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+markers = [
+    "browser: requires a real Playwright browser and the mock app running",
+]

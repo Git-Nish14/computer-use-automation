@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Open Sub-Account{% endblock %}
+{% block content %}
+<div class="box">
+  <div class="box-title">Open New Sub-Account — {{ member.name }} ({{ member_id }})</div>
+  <form method="POST" action="/members/{{ member_id }}/sub-account">
+    <table class="form-table">
+      <tr>
+        <td class="lbl"><label for="account_type">Account Type:</label></td>
+        <td>
+          <select name="account_type" id="account_type">
+            <option value="">-- Select --</option>
+            <option value="Savings">Savings</option>
+            <option value="Money Market">Money Market</option>
+            <option value="Christmas Club">Christmas Club</option>
+          </select>
+        </td>
+      </tr>
+      <tr>
+        <td class="lbl"><label for="initial_deposit">Initial Deposit ($):</label></td>
+        <td><input type="text" name="initial_deposit" id="initial_deposit" size="12" placeholder="e.g. 100.00"></td>
+      </tr>
+      <tr>
+        <td class="lbl"><label for="purpose">Purpose / Notes:</label></td>
+        <td><textarea name="purpose" id="purpose" rows="3" cols="30"></textarea></td>
+      </tr>
+      <tr>
+        <td></td>
+        <td style="padding-top:8px;">
+          <input type="submit" class="btn" value="Continue to Review">
+          &nbsp;
+          <a href="/members/{{ member_id }}" class="btn-sm">Cancel</a>
+        </td>
+      </tr>
+    </table>
+  </form>
+</div>
+{% endblock %}

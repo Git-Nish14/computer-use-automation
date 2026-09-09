@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Member Search{% endblock %}
+{% block content %}
+<div class="box">
+  <div class="box-title">Member Search</div>
+  <form method="POST" action="/members/search">
+    <table class="form-table">
+      <tr>
+        <td class="lbl"><label for="member_id">Member ID:</label></td>
+        <td><input type="text" name="member_id" id="member_id" size="15" value="{{ query_id }}"></td>
+        <td style="padding-left:20px;"><label for="last_name">Last Name:</label></td>
+        <td><input type="text" name="last_name" id="last_name" size="20" value="{{ query_name }}"></td>
+        <td style="padding-left:10px;"><input type="submit" class="btn" value="Search"></td>
+      </tr>
+    </table>
+  </form>
+</div>
+
+{% if results is not none %}
+<div class="box">
+  <div class="box-title">Search Results</div>
+  {% if results %}
+  <table class="results-table">
+    <thead>
+      <tr>
+        <th>Member ID</th>
+        <th>Name</th>
+        <th>Date of Birth</th>
+        <th>Phone</th>
+        <th>Action</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for m in results %}
+      <tr>
+        <td>{{ m.id }}</td>
+        <td>{{ m.name }}</td>
+        <td>{{ m.dob }}</td>
+        <td>{{ m.phone }}</td>
+        <td><a href="/members/{{ m.id }}" class="btn-sm">View Detail</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p>No members found matching your search criteria.</p>
+  {% endif %}
+</div>
+{% endif %}
+{% endblock %}

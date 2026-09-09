@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+<div class="box">
+  <div class="box-title">Welcome, {{ username }}</div>
+  <table style="width:100%;">
+    <tr>
+      <td style="width:50%;vertical-align:top;">
+        <table>
+          <tr><td colspan="2"><b>Quick Links</b></td></tr>
+          <tr><td>&nbsp;&nbsp;</td><td><a href="/members/search">Member Search</a></td></tr>
+        </table>
+      </td>
+      <td style="width:50%;vertical-align:top;">
+        <table>
+          <tr><td colspan="2"><b>System Status</b></td></tr>
+          <tr><td>Core Banking:</td><td style="color:green;">Online</td></tr>
+          <tr><td>Sessions today:</td><td>47</td></tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</div>
+{% endblock %}
