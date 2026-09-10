@@ -1,5 +1,6 @@
 # Replays a CapabilityArtifact step-by-step without calling the LLM.
-# Recovery waits and re-scans (never re-executes the action).
+# Params are substituted into locator values as well as step values/URLs.
+# Recovery waits and re-scans only — never re-executes the original action.
 # All exception paths return a typed ReplayResult — nothing unhandled bubbles up.
 
 from __future__ import annotations
@@ -8,9 +9,9 @@ import asyncio
 import re
 import time
 import uuid
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Literal
 
 from playwright.async_api import Page, TimeoutError as PlaywrightTimeout
 
@@ -19,6 +20,8 @@ from cua.artifact.schema import (
     CapabilityArtifact,
     CheckpointSpec,
     ErrorHandlingSpec,
+    LocatorSpec,
+    LocatorStrategy,
     OutputSpec,
     ParameterSpec,
     Step,
@@ -28,10 +31,17 @@ from cua.escalation.handler import EscalationHandler, EscalationRequest
 from cua.observability.logger import RunLogger
 from cua.replay.locator import AmbiguousLocatorError, ElementNotFoundError, resolve_locator
 from cua.replay.result import ErrorDetail, ReplayResult, ReplayStatus
-from cua.safety.policy import PolicyEnforcer, PolicyViolation, _hostname
+from cua.safety.policy import PolicyEnforcer, PolicyViolation
 
 _RECOVERY_WAIT_S = 3
 _RECOVERY_MAX_RETRIES = 2
+
+
+# Typed sentinel — distinct from any string an EXTRACT step could return.
+class _Recovered:
+    pass
+
+_RECOVERED = _Recovered()
 
 
 class _BusinessOutcome(Exception):
@@ -55,6 +65,12 @@ class _CheckpointFailed(Exception):
     def __init__(self, expected: str, observed: str):
         self.expected = expected
         self.observed = observed
+
+
+@dataclass
+class _HandoffResult:
+    """Returned by _try_escalation when the human resumes successfully."""
+    recovered_outputs: dict[str, str] = field(default_factory=dict)
 
 
 class ReplayExecutor:
@@ -83,7 +99,6 @@ class ReplayExecutor:
         page = self._session.page
         recovered: list[str] = []
 
-        # ── Pre-flight validation ────────────────────────────────────────────
         if artifact.schema_version != "1.0":
             return ReplayResult(
                 run_id=run_id, artifact_id=artifact.id, artifact_name=artifact.name,
@@ -124,11 +139,22 @@ class ReplayExecutor:
             return self._fail(run_id, artifact, "navigate_entry", 0,
                               len(artifact.steps), start, "navigation to entry URL", str(exc))
 
-        # Check we didn't immediately redirect outside the allowlist
         try:
             self._policy.check_url(artifact.safety, page.url)
         except PolicyViolation as exc:
             return self._pv(run_id, artifact, "post_goto_domain", "Post-navigation domain check", str(exc), start)
+
+        # Continuous domain guard — aborts forbidden navigations at the browser level
+        def _check_url_str(url: str) -> str | None:
+            try:
+                self._policy.check_url(artifact.safety, url)
+                return None
+            except PolicyViolation as e:
+                return str(e)
+        try:
+            await self._session.install_domain_guard(_check_url_str)
+        except Exception:
+            pass  # Route installation failure is non-fatal; post-facto checks remain
 
         outputs: dict[str, str] = {}
         steps_completed = 0
@@ -166,14 +192,14 @@ class ReplayExecutor:
                         exec_result, page, step, params,
                         run_id, i, artifact, start, recovered, steps_completed,
                     )
-                    if handoff == "continue":
+                    if isinstance(handoff, _HandoffResult):
+                        outputs.update(handoff.recovered_outputs)
                         steps_completed += 1
                         continue
                     return handoff  # type: ignore[return-value]
                 return exec_result
 
-            # exec_result is str | None (extracted value) or "recovered"
-            is_recovered = exec_result == "recovered"
+            is_recovered = isinstance(exec_result, _Recovered)
             extracted: str | None = None if is_recovered else exec_result  # type: ignore
 
             if not is_recovered and step.action.output_name and extracted is not None:
@@ -182,7 +208,7 @@ class ReplayExecutor:
             else:
                 self._logger.step_success(step.id)
 
-            # Verify checkpoint — including after recovery (proves the action succeeded)
+            # Verify checkpoint after any step, including recovered ones (proves the action worked)
             if step.checkpoint:
                 resolved_cp = _substitute_checkpoint(step.checkpoint, params)
                 try:
@@ -225,7 +251,6 @@ class ReplayExecutor:
                 ),
             )
 
-        # ── Output validation ────────────────────────────────────────────────
         output_error = _validate_outputs(artifact.outputs, outputs)
         if output_error:
             self._logger.run_failure("output_validation_failed")
@@ -255,12 +280,11 @@ class ReplayExecutor:
     async def _execute_with_recovery(
         self, page, step, value, url, artifact, params,
         run_id, step_idx, recovered, steps_completed, start,
-    ) -> ReplayResult | Literal["recovered"] | str | None:
+    ) -> ReplayResult | _Recovered | str | None:
         # On recoverable conditions: wait, re-scan, never re-execute the action.
-        # Returns "recovered" when the condition clears so the caller can verify
-        # the checkpoint. All exceptions become typed ReplayResult — nothing bubbles up.
+        # Logs "attempting recovery" on detection; logs "recovered" only after verification.
         try:
-            return await self._run_step(page, step, value, url, artifact.safety)
+            return await self._run_step(page, step, value, url, artifact.safety, params)
         except _BusinessOutcome as exc:
             screenshot = await self._screenshot(run_id, f"business_outcome_{step_idx}")
             self._logger.business_outcome(exc.code, exc.description)
@@ -273,24 +297,23 @@ class ReplayExecutor:
                 duration_s=time.monotonic() - start, evidence_path=str(self._evidence_dir),
             )
         except _Recoverable as exc:
-            self._logger.recovered(f"{exc.pattern} — waiting {_RECOVERY_WAIT_S}s")
-            recovered.append(exc.pattern)
+            # Detected a transient loading state; recovered.append() only after the condition clears
+            self._logger.step_error(step.id, f"Recoverable condition: '{exc.pattern}' — waiting to clear")
 
             for attempt in range(_RECOVERY_MAX_RETRIES):
                 await asyncio.sleep(_RECOVERY_WAIT_S)
                 try:
                     await page.wait_for_load_state("networkidle", timeout=10_000)
-                except PlaywrightTimeout:
-                    pass
-
-                # Re-scan only — never re-execute the action
+                except Exception:
+                    pass  # Any error during the wait (including browser closure) is handled by the scan below
                 try:
                     await self._scan_page_errors(page, step.action.error_handling)
-                    # No exception: condition cleared
-                    self._logger.recovered(f"{exc.pattern} cleared after {attempt + 1} retry")
-                    return "recovered"
+                    # Condition cleared — record and log AFTER verification, not before
+                    recovered.append(exc.pattern)
+                    self._logger.recovered(f"'{exc.pattern}' cleared after {attempt + 1} retry")
+                    return _RECOVERED
                 except _Recoverable:
-                    continue   # Still loading — try again
+                    continue
                 except _BusinessOutcome as bout:
                     screenshot = await self._screenshot(run_id, f"recovery_outcome_{step_idx}")
                     self._logger.business_outcome(bout.code, bout.description)
@@ -312,8 +335,7 @@ class ReplayExecutor:
                         steps_completed=steps_completed, total_steps=len(artifact.steps),
                         duration_s=time.monotonic() - start,
                         error=ErrorDetail(
-                            step_id=step.id,
-                            step_description=f"Recovery rescan revealed failure: {hf.expected}",
+                            step_id=step.id, step_description=f"Recovery rescan: {hf.expected}",
                             expected=hf.expected, observed=hf.observed,
                             screenshot_path=screenshot, timestamp=datetime.now(timezone.utc),
                         ),
@@ -328,7 +350,7 @@ class ReplayExecutor:
                         steps_completed=steps_completed, total_steps=len(artifact.steps),
                         duration_s=time.monotonic() - start,
                         error=ErrorDetail(
-                            step_id=step.id, step_description="Recovery scan error",
+                            step_id=step.id, step_description="Error during recovery wait",
                             expected="clean page state", observed=str(ex),
                             screenshot_path=screenshot, timestamp=datetime.now(timezone.utc),
                         ),
@@ -336,9 +358,7 @@ class ReplayExecutor:
 
             # Retries exhausted
             screenshot = await self._screenshot(run_id, f"recovery_exhausted_{step_idx}")
-            self._logger.step_failure(step.id,
-                                      "recoverable condition to clear",
-                                      f"'{exc.pattern}' persisted after {_RECOVERY_MAX_RETRIES} retries")
+            self._logger.step_failure(step.id, "condition to clear", f"'{exc.pattern}' persisted after {_RECOVERY_MAX_RETRIES} retries")
             self._logger.run_failure("hard_failure")
             return ReplayResult(
                 run_id=run_id, artifact_id=artifact.id, artifact_name=artifact.name,
@@ -386,12 +406,24 @@ class ReplayExecutor:
                 ),
             )
 
-    async def _run_step(self, page: Page, step: Step, value: str | None, url: str | None, safety) -> str | None:
+    async def _run_step(
+        self, page: Page, step: Step, value: str | None, url: str | None,
+        safety, params: dict[str, str],
+    ) -> str | None:
         action = step.action
         eh = action.error_handling
 
         if action.type == ActionType.NAVIGATE:
-            await page.goto(url or action.url or "", wait_until="networkidle", timeout=action.timeout_ms)
+            dest = url or action.url or ""
+            await page.goto(dest, wait_until="networkidle", timeout=action.timeout_ms)
+            # Check for redirect outside the allowlist
+            try:
+                self._policy.check_url(safety, page.url)
+            except PolicyViolation as exc:
+                raise _HardFailure(
+                    expected="post-navigate URL within permitted domains",
+                    observed=f"redirected to {page.url}: {exc}",
+                )
             await self._scan_page_errors(page, eh)
             return None
 
@@ -411,7 +443,10 @@ class ReplayExecutor:
                 expected="locator spec in step action",
                 observed=f"step {step.id} type={action.type.value} has no locator",
             )
-        loc = await resolve_locator(page, action.locator)
+
+        # Substitute params into locator values (e.g. aria-name containing member ID)
+        resolved_locator = _substitute_locator(action.locator, params)
+        loc = await resolve_locator(page, resolved_locator)
 
         if action.type in (ActionType.CLICK, ActionType.SUBMIT):
             await loc.click(timeout=action.timeout_ms)
@@ -439,8 +474,7 @@ class ReplayExecutor:
             return None
 
         if action.type == ActionType.EXTRACT:
-            text = (await loc.text_content(timeout=action.timeout_ms) or "").strip()
-            return text
+            return (await loc.text_content(timeout=action.timeout_ms) or "").strip()
 
         if action.type == ActionType.ASSERT:
             text = (await loc.text_content(timeout=action.timeout_ms) or "").strip()
@@ -458,7 +492,9 @@ class ReplayExecutor:
             body = await page.locator("body").text_content(timeout=2_000)
             body = body or ""
         except Exception:
-            return  # Can't read body — don't silently assume no errors, but don't crash either
+            # Can't read page body — state is unknown; treat as recoverable so the
+            # caller retries rather than falsely assuming the condition cleared.
+            raise _Recoverable("page content unreadable")
         for outcome in eh.expected_outcomes:
             if outcome.detection_pattern.lower() in body.lower():
                 raise _BusinessOutcome(outcome.code, outcome.description)
@@ -476,23 +512,26 @@ class ReplayExecutor:
         self, failed_result: ReplayResult, page: Page, step: Step,
         params: dict, run_id: str, step_idx: int, artifact: CapabilityArtifact,
         start: float, recovered: list[str], steps_completed: int,
-    ) -> ReplayResult | Literal["continue"]:
+    ) -> ReplayResult | _HandoffResult:
         err = failed_result.error
         req = EscalationRequest(
             run_id=run_id,
-            reason=f"Replay blocked at '{step.id}': {err.expected if err else 'unknown error'}",
+            reason=f"Replay blocked at '{step.id}': {err.expected if err else 'unknown'}",
             current_state=err.observed if err else "unknown state",
             goal=f"Complete step: {step.description}",
             step_num=step_idx,
             cdp_url=self._session.cdp_url,
             screenshot_path=Path(err.screenshot_path) if err and err.screenshot_path else None,
         )
+        self._logger.handoff_start(step.id, err.expected if err else "unknown")
         outcome = await self._escalation.handle(req)  # type: ignore[union-attr]
 
-        # Record pause event regardless of description
-        self._logger.human_action(
-            outcome.human_action_description or f"Human took control at step '{step.id}' (no description given)"
-        )
+        # Emit the handoff outcome as a distinct structured event
+        self._logger.handoff_end(step.id, outcome.resumed)
+
+        # Human-provided description is separate from the outcome event
+        if outcome.human_action_description:
+            self._logger.human_action(outcome.human_action_description)
 
         if not outcome.resumed:
             return ReplayResult(
@@ -502,8 +541,7 @@ class ReplayExecutor:
                 duration_s=time.monotonic() - start, evidence_path=str(self._evidence_dir),
                 error=ErrorDetail(
                     step_id=step.id, step_description=step.description,
-                    expected="human to resume after escalation",
-                    observed="operator chose to abort",
+                    expected="human to resume", observed="operator chose to abort",
                     timestamp=datetime.now(timezone.utc),
                 ),
             )
@@ -515,44 +553,128 @@ class ReplayExecutor:
             return self._pv(run_id, artifact, f"{step.id}_post_handoff",
                             "Domain check after human handoff", str(exc), start, steps_completed)
 
-        # Verify step checkpoint to confirm human completed the action
-        check_target = step.checkpoint
-        if not check_target:
-            # No declared checkpoint — use final checkpoint as proxy
-            check_target = artifact.checkpoint
-        resolved_cp = _substitute_checkpoint(check_target, params)
-        try:
-            await _verify_checkpoint(page, resolved_cp)
-        except _CheckpointFailed as exc:
-            screenshot = await self._screenshot(run_id, f"post_handoff_fail_{step_idx}")
-            return ReplayResult(
-                run_id=run_id, artifact_id=artifact.id, artifact_name=artifact.name,
-                status=ReplayStatus.HARD_FAILURE, recovered_conditions=recovered,
-                steps_completed=steps_completed, total_steps=len(artifact.steps),
-                duration_s=time.monotonic() - start,
-                error=ErrorDetail(
-                    step_id=step.id,
-                    step_description=f"Post-handoff verification: {check_target.description}",
-                    expected=exc.expected, observed=exc.observed,
-                    screenshot_path=screenshot, timestamp=datetime.now(timezone.utc),
-                ),
-            )
+        recovered_outputs: dict[str, str] = {}
 
-        # If the step was an extraction, try to collect the output now
+        # For extraction steps, re-run the extraction so the output is collected.
+        # This is automated — log as step_success, not human_action.
         if step.action.type == ActionType.EXTRACT and step.action.output_name and step.action.locator:
             try:
-                from cua.replay.locator import resolve_locator as _rl
-                loc = await _rl(page, step.action.locator)
-                text = (await loc.text_content(timeout=5_000) or "").strip()
-                # Log the extracted value so it appears in evidence even though
-                # we can't inject it into result.outputs from this call site.
-                self._logger.human_action(
-                    f"Post-handoff extraction of '{step.action.output_name}': {text}"
-                )
+                resolved_locator = _substitute_locator(step.action.locator, params)
+                loc = await resolve_locator(page, resolved_locator)
+                text = (await loc.text_content(timeout=step.action.timeout_ms) or "").strip()
+                recovered_outputs[step.action.output_name] = text
+                self._logger.step_success(f"{step.id}_post_handoff", text)
             except Exception:
-                pass
+                pass  # Output validation will catch missing value
 
-        return "continue"
+        # For non-extraction steps without a checkpoint, verify a minimal postcondition.
+        # This distinguishes "human completed the action" from "human hit resume anyway".
+        if step.action.type == ActionType.TYPE and step.action.locator:
+            resolved_val = _substitute(step.action.value or "", params)
+            if resolved_val:
+                try:
+                    resolved_locator = _substitute_locator(step.action.locator, params)
+                    loc = await resolve_locator(page, resolved_locator)
+                    actual = await loc.input_value(timeout=3_000)
+                    if resolved_val not in actual:
+                        screenshot = await self._screenshot(run_id, f"handoff_type_fail_{step_idx}")
+                        return ReplayResult(
+                            run_id=run_id, artifact_id=artifact.id, artifact_name=artifact.name,
+                            status=ReplayStatus.HARD_FAILURE, recovered_conditions=recovered,
+                            steps_completed=steps_completed, total_steps=len(artifact.steps),
+                            duration_s=time.monotonic() - start,
+                            error=ErrorDetail(
+                                step_id=step.id,
+                                step_description=f"Post-handoff: field not filled as expected",
+                                expected=f"field contains '{resolved_val}'",
+                                observed=f"field contains '{actual}'",
+                                screenshot_path=screenshot, timestamp=datetime.now(timezone.utc),
+                            ),
+                        )
+                except Exception:
+                    pass  # Non-input elements (textareas, rich editors) — let final checkpoint catch it
+
+        elif step.action.type == ActionType.NAVIGATE and step.action.url:
+            expected_nav_url = _substitute(step.action.url, params)
+            if expected_nav_url and expected_nav_url not in page.url:
+                screenshot = await self._screenshot(run_id, f"handoff_nav_fail_{step_idx}")
+                return ReplayResult(
+                    run_id=run_id, artifact_id=artifact.id, artifact_name=artifact.name,
+                    status=ReplayStatus.HARD_FAILURE, recovered_conditions=recovered,
+                    steps_completed=steps_completed, total_steps=len(artifact.steps),
+                    duration_s=time.monotonic() - start,
+                    error=ErrorDetail(
+                        step_id=step.id,
+                        step_description=f"Post-handoff: navigate destination not reached",
+                        expected=f"URL contains '{expected_nav_url}'",
+                        observed=f"URL is '{page.url}'",
+                        screenshot_path=screenshot, timestamp=datetime.now(timezone.utc),
+                    ),
+                )
+
+        # Postcondition verification after handoff.
+        # Both branches run independently: a step can have a checkpoint AND be an assertion.
+        # Checkpoint verifies the URL/element state; assertion re-runs the actual check.
+        if step.checkpoint:
+            resolved_cp = _substitute_checkpoint(step.checkpoint, params)
+            try:
+                await _verify_checkpoint(page, resolved_cp)
+            except _CheckpointFailed as exc:
+                screenshot = await self._screenshot(run_id, f"post_handoff_fail_{step_idx}")
+                return ReplayResult(
+                    run_id=run_id, artifact_id=artifact.id, artifact_name=artifact.name,
+                    status=ReplayStatus.HARD_FAILURE, recovered_conditions=recovered,
+                    steps_completed=steps_completed, total_steps=len(artifact.steps),
+                    duration_s=time.monotonic() - start,
+                    error=ErrorDetail(
+                        step_id=step.id,
+                        step_description=f"Post-handoff checkpoint: {step.checkpoint.description}",
+                        expected=exc.expected, observed=exc.observed,
+                        screenshot_path=screenshot, timestamp=datetime.now(timezone.utc),
+                    ),
+                )
+
+        # Always re-run assertions independently of whether a checkpoint is present.
+        # This prevents "resume without fixing" being accepted when the URL check passes
+        # but the assertion's required text is still absent.
+        if step.action.type == ActionType.ASSERT and step.action.locator:
+            try:
+                resolved_locator = _substitute_locator(step.action.locator, params)
+                loc = await resolve_locator(page, resolved_locator)
+                text = (await loc.text_content(timeout=step.action.timeout_ms) or "").strip()
+                expected_val = _substitute(step.action.value or "", params)
+                if expected_val and expected_val not in text:
+                    screenshot = await self._screenshot(run_id, f"resume_assert_fail_{step_idx}")
+                    return ReplayResult(
+                        run_id=run_id, artifact_id=artifact.id, artifact_name=artifact.name,
+                        status=ReplayStatus.HARD_FAILURE, recovered_conditions=recovered,
+                        steps_completed=steps_completed, total_steps=len(artifact.steps),
+                        duration_s=time.monotonic() - start,
+                        error=ErrorDetail(
+                            step_id=step.id,
+                            step_description=f"Post-handoff assertion: {step.description}",
+                            expected=f"element contains '{expected_val}'",
+                            observed=f"element contains '{text}'",
+                            screenshot_path=screenshot, timestamp=datetime.now(timezone.utc),
+                        ),
+                    )
+            except Exception as exc:
+                screenshot = await self._screenshot(run_id, f"resume_assert_error_{step_idx}")
+                return ReplayResult(
+                    run_id=run_id, artifact_id=artifact.id, artifact_name=artifact.name,
+                    status=ReplayStatus.HARD_FAILURE, recovered_conditions=recovered,
+                    steps_completed=steps_completed, total_steps=len(artifact.steps),
+                    duration_s=time.monotonic() - start,
+                    error=ErrorDetail(
+                        step_id=step.id,
+                        step_description=f"Post-handoff assertion error: {step.description}",
+                        expected="assertion to pass after handoff",
+                        observed=str(exc), screenshot_path=screenshot,
+                        timestamp=datetime.now(timezone.utc),
+                    ),
+                )
+
+        return _HandoffResult(recovered_outputs=recovered_outputs)
 
     async def _screenshot(self, run_id: str, label: str) -> str:
         path = self._evidence_dir / f"{run_id}_{label}.png"
@@ -596,6 +718,16 @@ def _substitute(template: str, params: dict[str, str]) -> str:
     return template
 
 
+def _substitute_locator(locator: LocatorSpec, params: dict[str, str]) -> LocatorSpec:
+    """Apply param substitution to locator values (e.g. ARIA name containing a member ID)."""
+    def sub(s: LocatorStrategy) -> LocatorStrategy:
+        new_val = _substitute(s.value, params)
+        return s.model_copy(update={"value": new_val}) if new_val != s.value else s
+    new_primary = sub(locator.primary)
+    new_fallbacks = [sub(f) for f in locator.fallbacks]
+    return locator.model_copy(update={"primary": new_primary, "fallbacks": new_fallbacks})
+
+
 def _substitute_checkpoint(cp: CheckpointSpec, params: dict[str, str]) -> CheckpointSpec:
     return cp.model_copy(update={
         "target": _substitute(cp.target, params),
@@ -604,43 +736,45 @@ def _substitute_checkpoint(cp: CheckpointSpec, params: dict[str, str]) -> Checkp
 
 
 async def _verify_checkpoint(page: Page, cp: CheckpointSpec) -> None:
-    url = page.url
-
-    if cp.type == "url_contains":
-        if cp.target not in url:
-            raise _CheckpointFailed(
-                expected=f"URL contains '{cp.target}'", observed=f"URL is '{url}'",
-            )
-    elif cp.type == "url_exact":
-        if url.rstrip("/") != cp.target.rstrip("/"):
-            raise _CheckpointFailed(expected=f"URL == '{cp.target}'", observed=f"URL is '{url}'")
-    elif cp.type == "element_present":
-        try:
-            await page.wait_for_selector(cp.target, timeout=5_000)
-        except PlaywrightTimeout:
-            raise _CheckpointFailed(
-                expected=f"element '{cp.target}' present", observed="not found within timeout",
-            )
-    elif cp.type == "text_present":
-        try:
-            await page.wait_for_selector(f"text={cp.target}", timeout=5_000)
-        except PlaywrightTimeout:
-            raise _CheckpointFailed(
-                expected=f"text '{cp.target}' on page", observed="not found within timeout",
-            )
-    elif cp.type == "element_text":
-        try:
-            el = await page.wait_for_selector(cp.target, timeout=5_000)
-            actual = ((await el.text_content()) or "").strip()
-            if cp.expected_value and cp.expected_value not in actual:
-                raise _CheckpointFailed(
-                    expected=f"element text contains '{cp.expected_value}'",
-                    observed=f"element text is '{actual}'",
-                )
-        except PlaywrightTimeout:
-            raise _CheckpointFailed(
-                expected=f"element '{cp.target}' present", observed="not found within timeout",
-            )
+    # All Playwright errors during checkpoint verification are converted to _CheckpointFailed
+    # so callers always receive a structured result rather than an unhandled exception.
+    try:
+        url = page.url
+        if cp.type == "url_contains":
+            if cp.target not in url:
+                raise _CheckpointFailed(expected=f"URL contains '{cp.target}'", observed=f"URL is '{url}'")
+        elif cp.type == "url_exact":
+            if url.rstrip("/") != cp.target.rstrip("/"):
+                raise _CheckpointFailed(expected=f"URL == '{cp.target}'", observed=f"URL is '{url}'")
+        elif cp.type == "element_present":
+            try:
+                await page.wait_for_selector(cp.target, timeout=5_000)
+            except PlaywrightTimeout:
+                raise _CheckpointFailed(expected=f"element '{cp.target}' present", observed="not found")
+        elif cp.type == "text_present":
+            try:
+                await page.wait_for_selector(f"text={cp.target}", timeout=5_000)
+            except PlaywrightTimeout:
+                raise _CheckpointFailed(expected=f"text '{cp.target}' on page", observed="not found")
+        elif cp.type == "element_text":
+            try:
+                el = await page.wait_for_selector(cp.target, timeout=5_000)
+                actual = ((await el.text_content()) or "").strip()
+                if cp.expected_value and cp.expected_value not in actual:
+                    raise _CheckpointFailed(
+                        expected=f"element text contains '{cp.expected_value}'",
+                        observed=f"element text is '{actual}'",
+                    )
+            except PlaywrightTimeout:
+                raise _CheckpointFailed(expected=f"element '{cp.target}' present", observed="not found")
+    except _CheckpointFailed:
+        raise  # Let caller handle as expected
+    except Exception as exc:
+        # Playwright/browser error during verification — treat as checkpoint failure with evidence
+        raise _CheckpointFailed(
+            expected="checkpoint verification to complete without error",
+            observed=f"unexpected error: {exc}",
+        )
 
 
 def _validate_inputs(artifact: CapabilityArtifact, params: dict[str, str]) -> str | None:
@@ -649,11 +783,20 @@ def _validate_inputs(artifact: CapabilityArtifact, params: dict[str, str]) -> st
 
     # Check params first so the error message is about the missing param, not the step ref
     for p in artifact.parameters:
-        if not p.required:
-            continue
         if p.name not in params:
-            return f"Required parameter '{p.name}' ({p.description}) was not supplied."
-        val = params[p.name]
+            if p.required:
+                return f"Required parameter '{p.name}' ({p.description}) was not supplied."
+            continue  # optional and not supplied — skip
+
+        # Normalize to string — JSON booleans/integers must not reach .lower()
+        raw = params[p.name]
+        if not isinstance(raw, str):
+            return f"Parameter '{p.name}' must be a string, received {type(raw).__name__}."
+        val: str = raw
+
+        if not val.strip():
+            return f"Parameter '{p.name}' must not be empty or whitespace."
+
         if p.type == "integer":
             try:
                 int(val)
@@ -668,53 +811,115 @@ def _validate_inputs(artifact: CapabilityArtifact, params: dict[str, str]) -> st
             if val.lower() not in ("true", "false", "1", "0", "yes", "no"):
                 return f"Parameter '{p.name}' must be a boolean, got {val!r}."
         if p.validation_pattern:
-            if not re.fullmatch(p.validation_pattern, val):
-                return (
-                    f"Parameter '{p.name}' value {val!r} does not match "
-                    f"validation pattern '{p.validation_pattern}'."
-                )
+            try:
+                if not re.fullmatch(p.validation_pattern, val):
+                    return (
+                        f"Parameter '{p.name}' value {val!r} does not match "
+                        f"validation pattern '{p.validation_pattern}'."
+                    )
+            except re.error as exc:
+                return f"Parameter '{p.name}' has invalid validation_pattern: {exc}"
 
     for o in artifact.outputs:
-        if o.source_step_id != "unknown" and o.source_step_id not in step_ids:
+        if o.source_step_id == "unknown":
+            return (
+                f"Output '{o.name}' has source_step_id='unknown' — it must be bound to "
+                f"the extraction step that produces it. Available steps: {sorted(step_ids)}"
+            )
+        if o.source_step_id not in step_ids:
             return (
                 f"Output '{o.name}' references step '{o.source_step_id}' "
                 f"which does not exist in the artifact (steps: {sorted(step_ids)})."
             )
+        # The referenced step must be an EXTRACT action bound to this output name
+        source_step = next(s for s in artifact.steps if s.id == o.source_step_id)
+        if source_step.action.type != ActionType.EXTRACT:
+            return (
+                f"Output '{o.name}' references step '{o.source_step_id}' which is a "
+                f"{source_step.action.type.value} action, not an extraction."
+            )
+        if source_step.action.output_name and source_step.action.output_name != o.name:
+            return (
+                f"Output '{o.name}' references step '{o.source_step_id}' but that step's "
+                f"output_name is '{source_step.action.output_name}' — name mismatch."
+            )
 
+    # Check all executable fields for unresolved placeholders
     for step in artifact.steps:
-        for field_val in (step.action.value, step.action.url):
+        fields_to_check: list[tuple[str, str | None]] = [
+            ("action.value", step.action.value),
+            ("action.url", step.action.url),
+        ]
+        if step.action.locator:
+            fields_to_check.append(("locator.primary", step.action.locator.primary.value))
+            for i, fb in enumerate(step.action.locator.fallbacks):
+                fields_to_check.append((f"locator.fallback[{i}]", fb.value))
+        if step.checkpoint:
+            fields_to_check.append(("checkpoint.target", step.checkpoint.target))
+            if step.checkpoint.expected_value:
+                fields_to_check.append(("checkpoint.expected_value", step.checkpoint.expected_value))
+
+        for field_name, field_val in fields_to_check:
             if field_val and "{" in field_val:
                 unresolved = re.findall(r"\{(\w+)\}", field_val)
                 missing = [u for u in unresolved if u not in params]
                 if missing:
                     return (
-                        f"Step '{step.id}' contains unresolved placeholder(s) {missing}. "
+                        f"Step '{step.id}' {field_name} has unresolved placeholder(s) {missing}. "
                         f"Supply these as input parameters."
                     )
+
+    # Check entry URL
+    if "{" in artifact.target.entry_url:
+        unresolved = re.findall(r"\{(\w+)\}", artifact.target.entry_url)
+        missing = [u for u in unresolved if u not in params]
+        if missing:
+            return f"Entry URL has unresolved placeholder(s) {missing}."
+
+    # Check final checkpoint (both target and expected_value)
+    for field_name, field_val in [
+        ("final_checkpoint.target", artifact.checkpoint.target),
+        ("final_checkpoint.expected_value", artifact.checkpoint.expected_value),
+    ]:
+        if field_val and "{" in field_val:
+            unresolved = re.findall(r"\{(\w+)\}", field_val)
+            missing = [u for u in unresolved if u not in params]
+            if missing:
+                return f"{field_name} has unresolved placeholder(s) {missing}."
 
     return None
 
 
 def _validate_outputs(declared: list[OutputSpec], collected: dict[str, str]) -> str | None:
+    """Returns an error string if collected outputs are invalid, None if OK."""
     for spec in declared:
         if spec.name not in collected:
-            return f"Declared output '{spec.name}' ({spec.description}) was not collected during replay."
+            return f"Declared output '{spec.name}' ({spec.description}) was not collected."
         val = collected[spec.name]
-        if spec.type in ("decimal",):
+        if not isinstance(val, str):
+            # Normalize to string for validation
+            val = str(val)
+        if spec.type == "decimal":
             clean = re.sub(r"[$,\s]", "", val)
             try:
                 float(clean)
             except (ValueError, TypeError):
                 return (
-                    f"Output '{spec.name}' declared type=decimal but extracted value "
-                    f"{val!r} cannot be parsed as a number."
+                    f"Output '{spec.name}' declared type=decimal but value "
+                    f"{val!r} is not parseable as a number."
                 )
         elif spec.type == "integer":
             try:
                 int(val.strip())
             except (ValueError, TypeError):
                 return (
-                    f"Output '{spec.name}' declared type=integer but extracted value "
+                    f"Output '{spec.name}' declared type=integer but value "
                     f"{val!r} is not a valid integer."
+                )
+        elif spec.type == "boolean":
+            if val.lower() not in ("true", "false", "1", "0", "yes", "no"):
+                return (
+                    f"Output '{spec.name}' declared type=boolean but value "
+                    f"{val!r} is not recognizable as a boolean."
                 )
     return None

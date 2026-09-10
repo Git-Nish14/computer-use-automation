@@ -59,7 +59,7 @@ def _artifact(
         schema_version=schema_version,
         target=TargetSpec(entry_url="http://127.0.0.1:5050", surface_type=SurfaceType.WEB_LEGACY),
         parameters=params or [ParameterSpec(name="member_id", type="string", description="Member ID")],
-        outputs=outputs or [OutputSpec(name="balance", type="decimal", description="Balance", source_step_id="unknown")],
+        outputs=outputs or [],  # No outputs by default — avoids "unknown" source_step_id issues
         steps=steps or [],
         checkpoint=checkpoint or CheckpointSpec(
             description="On member page", type="url_contains", target="/members/",

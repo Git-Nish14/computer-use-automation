@@ -1,7 +1,8 @@
 # Human-in-the-loop handoff.
 # Pauses automation, exposes the live browser via CDP remote debugging,
-# waits for the operator to finish, then resumes. The operator surface
-# here is a CLI prompt — in production this would be a WebSocket console.
+# waits for the operator to finish, then resumes.
+# The handler does NOT log human_action — that is the caller's responsibility
+# so we avoid duplicate log entries.
 
 from __future__ import annotations
 
@@ -35,7 +36,7 @@ class EscalationOutcome:
 class EscalationHandler:
     def __init__(self, interactive: bool = True, logger=None):
         self._interactive = interactive
-        self._logger = logger
+        # logger kept for API compatibility but human_action logging is caller's responsibility
 
     async def handle(self, req: EscalationRequest) -> EscalationOutcome:
         self._print_escalation(req)
@@ -68,9 +69,6 @@ class EscalationHandler:
                 description = description.strip() or None
             except (EOFError, KeyboardInterrupt):
                 description = None
-
-            if self._logger and description:
-                self._logger.human_action(description)
 
             console.print("[green]Resuming automation.[/green]")
             return EscalationOutcome(resumed=True, human_action_description=description)

@@ -1,8 +1,8 @@
 {
   "schema_version": "1.0",
   "id": "a3f8c2d1-7b4e-4a2f-9c5d-8e1b6f3a0d27",
-  "name": "log_in_and_look_up_member_12345_then_read_their_savings_balan",
-  "description": "Successfully logged in, found member 12345 (John Smith), and read their Savings account balance of $8,750.00",
+  "name": "log_in_and_look_up_member_then_read_their_savings_balance",
+  "description": "Logs in, searches for a member by ID, opens their detail page, and reads the Savings account balance.",
   "target": {
     "entry_url": "http://127.0.0.1:5000",
     "surface_type": "web_legacy",
@@ -18,14 +18,23 @@
       "example": "12345",
       "validation_pattern": null,
       "sensitive": false
+    },
+    {
+      "name": "login_password",
+      "type": "string",
+      "description": "Staff portal login password",
+      "required": true,
+      "example": null,
+      "validation_pattern": null,
+      "sensitive": true
     }
   ],
   "outputs": [
     {
       "name": "savings_balance",
       "type": "decimal",
-      "description": "The savings account balance",
-      "source_step_id": "step_11_extract_text"
+      "description": "The savings account balance (formatted currency string, e.g. '$8,750.00')",
+      "source_step_id": "step_09_extract_text"
     }
   ],
   "steps": [
@@ -52,7 +61,7 @@
         "locator": {
           "primary": {"method": "aria_label", "value": "Username:", "role": null, "exact": false},
           "fallbacks": [{"method": "placeholder", "value": "username", "role": null, "exact": false}],
-          "rationale": "Label text 'Username:' — stable if form labels don't change"
+          "rationale": "Label text 'Username:'"
         },
         "value": "demo",
         "url": null,
@@ -71,9 +80,9 @@
         "locator": {
           "primary": {"method": "aria_label", "value": "Password:", "role": null, "exact": false},
           "fallbacks": [],
-          "rationale": "Label text 'Password:' — stable if form labels don't change"
+          "rationale": "Label text 'Password:'"
         },
-        "value": "demo123",
+        "value": "{login_password}",
         "url": null,
         "timeout_ms": 10000,
         "risk_level": "moderate",
@@ -84,13 +93,13 @@
     },
     {
       "id": "step_04_click",
-      "description": "Click the Log In button to submit credentials",
+      "description": "Click Log In to submit credentials",
       "action": {
         "type": "click",
         "locator": {
           "primary": {"method": "aria_role", "value": "Log In", "role": "button", "exact": false},
           "fallbacks": [{"method": "text", "value": "Log In", "role": null, "exact": false}],
-          "rationale": "ARIA role='button' name='Log In' — semantic, survives layout changes"
+          "rationale": "ARIA role=button name='Log In'"
         },
         "value": null,
         "url": null,
@@ -133,7 +142,7 @@
         "locator": {
           "primary": {"method": "aria_label", "value": "Member ID:", "role": null, "exact": false},
           "fallbacks": [],
-          "rationale": "Label text 'Member ID:' — stable if label wording is consistent"
+          "rationale": "Label text 'Member ID:'"
         },
         "value": "{member_id}",
         "url": null,
@@ -146,13 +155,13 @@
     },
     {
       "id": "step_07_click",
-      "description": "Click the Search button to submit the member ID search",
+      "description": "Click Search to find the member",
       "action": {
         "type": "click",
         "locator": {
           "primary": {"method": "aria_role", "value": "Search", "role": "button", "exact": false},
           "fallbacks": [{"method": "text", "value": "Search", "role": null, "exact": false}],
-          "rationale": "ARIA role='button' name='Search' — semantic, survives layout changes"
+          "rationale": "ARIA role=button name='Search'"
         },
         "value": null,
         "url": null,
@@ -161,7 +170,7 @@
         "output_name": null,
         "error_handling": {
           "expected_outcomes": [
-            {"code": "member_not_found", "description": "The requested member was not found", "detection_pattern": "No members found"},
+            {"code": "member_not_found", "description": "Member not in system", "detection_pattern": "No members found"},
             {"code": "record_not_found", "description": "Requested record does not exist", "detection_pattern": "not found"}
           ],
           "recoverable_patterns": ["Please wait", "Loading"],
@@ -172,13 +181,13 @@
     },
     {
       "id": "step_08_click",
-      "description": "Click the View Detail link to open the member's account page",
+      "description": "Click View Detail to open the member account page",
       "action": {
         "type": "click",
         "locator": {
           "primary": {"method": "text", "value": "View Detail", "role": null, "exact": false},
           "fallbacks": [],
-          "rationale": "Visible text 'View Detail' — works on legacy apps without ARIA"
+          "rationale": "Visible text 'View Detail' — unique in search results when a single member matches"
         },
         "value": null,
         "url": null,
@@ -187,22 +196,22 @@
         "output_name": null,
         "error_handling": {
           "expected_outcomes": [
-            {"code": "member_not_found", "description": "The requested member was not found", "detection_pattern": "No members found"}
+            {"code": "member_not_found", "description": "Member not found", "detection_pattern": "No members found"}
           ],
           "recoverable_patterns": ["Please wait", "Loading"],
           "fail_patterns": ["500 Internal Server Error", "Application Error"]
         }
       },
       "checkpoint": {
-        "description": "Member detail page loaded",
+        "description": "Landed on the correct member's detail page",
         "type": "url_contains",
-        "target": "/members/",
+        "target": "/members/{member_id}",
         "expected_value": null
       }
     },
     {
       "id": "step_09_extract_text",
-      "description": "Extract the savings account balance from the member detail page",
+      "description": "Extract the savings account balance from the accounts table",
       "action": {
         "type": "extract",
         "locator": {
@@ -215,7 +224,7 @@
           "fallbacks": [
             {"method": "css", "value": "tr:has-text('Savings') .balance-cell", "role": null, "exact": false}
           ],
-          "rationale": "XPath scoped to the Savings row in the accounts table — avoids ambiguity with Checking row which also has a .balance-cell element"
+          "rationale": "XPath scoped to the Savings row — avoids selecting the Checking row's balance-cell element"
         },
         "value": null,
         "url": null,
@@ -228,9 +237,9 @@
     }
   ],
   "checkpoint": {
-    "description": "Goal accomplished: Successfully logged in, found member 12345 (John Smith), and read their",
+    "description": "On the correct member's detail page with balance extracted",
     "type": "url_contains",
-    "target": "/members/",
+    "target": "/members/{member_id}",
     "expected_value": null
   },
   "safety": {
@@ -238,7 +247,7 @@
     "permitted_action_types": ["navigate", "click", "type", "extract", "wait"],
     "max_steps": 50,
     "requires_human_approval_for": [],
-    "sensitive_param_names": []
+    "sensitive_param_names": ["login_password"]
   },
   "metadata": {
     "created_at": "2025-09-09T12:03:47.821Z",

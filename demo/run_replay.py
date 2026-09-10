@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -52,20 +53,19 @@ def main(artifact, param_pairs, params_json, headless, allow_high_risk,
         k, v = pair.split("=", 1)
         params[k.strip()] = v.strip()
 
-    headless = headless or __import__("os").environ.get("BROWSER_HEADLESS", "false").lower() == "true"
-    cdp_port = int(__import__("os").environ.get("BROWSER_CDP_PORT", "9222"))
+    headless = headless or os.environ.get("BROWSER_HEADLESS", "false").lower() == "true"
+    cdp_port = int(os.environ.get("BROWSER_CDP_PORT", "9222"))
 
     run_ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
     ev_dir = Path(evidence_dir) / f"replay_{run_ts}"
     ev_dir.mkdir(parents=True, exist_ok=True)
-    log_path = ev_dir / "run.jsonl"
 
     safe_params = redact_params(params, cap.safety.sensitive_param_names)
     console.print(f"Replaying: [bold]{cap.name}[/bold]")
     console.print(f"Params: {safe_params}")
 
     result = asyncio.run(
-        _run(cap, params, headless, cdp_port, allow_high_risk, escalate_on_failure, ev_dir, log_path)
+        _run(cap, params, headless, cdp_port, allow_high_risk, escalate_on_failure, ev_dir)
     )
 
     console.print(f"\nEvidence: {ev_dir}")
@@ -95,12 +95,19 @@ def main(artifact, param_pairs, params_json, headless, allow_high_risk,
         sys.exit(1)
 
 
-async def _run(cap, params, headless, cdp_port, allow_high_risk, escalate_on_failure, ev_dir, log_path):
+async def _run(cap, params, headless, cdp_port, allow_high_risk, escalate_on_failure, ev_dir):
+    log_path = ev_dir / "run.jsonl"
+    # Replay logger needs both names and actual values for sensitive params,
+    # so it can redact them if they appear in free-text fields like errors or descriptions.
+    sensitive_values = [params[n] for n in cap.safety.sensitive_param_names if n in params]
     logger = RunLogger(
         log_path, run_id="replay", run_type="replay",
         sensitive_param_names=cap.safety.sensitive_param_names,
+        sensitive_values=sensitive_values,
     )
-    session = BrowserSession(headless=headless, cdp_port=cdp_port, trace_dir=ev_dir)
+    has_sensitive = bool(cap.safety.sensitive_param_names)
+    session = BrowserSession(headless=headless, cdp_port=cdp_port, trace_dir=ev_dir,
+                             capture_snapshots=not has_sensitive)
     await session.start()
 
     escalation = EscalationHandler(interactive=True, logger=logger) if escalate_on_failure else None

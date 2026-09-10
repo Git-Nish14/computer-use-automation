@@ -1,5 +1,6 @@
 # OpenAI function definitions for the discovery agent.
-# One tool per browser action. The agent picks exactly one per turn.
+# extract_text supports xpath_selector/css_selector for scoped targeting
+# (e.g. a balance cell within a specific table row).
 
 from __future__ import annotations
 
@@ -78,7 +79,11 @@ AGENT_TOOLS: list[dict] = [
         "type": "function",
         "function": {
             "name": "extract_text",
-            "description": "Read text from an element and return it. Set output_name to bind it to a declared output.",
+            "description": (
+                "Read text from an element and bind it to a declared output. "
+                "For scoped extraction (e.g. a cell within a specific table row), "
+                "use xpath_selector or css_selector instead of role/label targeting."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -86,10 +91,24 @@ AGENT_TOOLS: list[dict] = [
                     "aria_role": {"type": "string"},
                     "aria_name": {"type": "string"},
                     "text_fallback": {"type": "string"},
-                    "output_name": {"type": "string", "description": "Key from the invocation contract to bind this value to."},
+                    "xpath_selector": {
+                        "type": "string",
+                        "description": (
+                            "XPath for scoped targeting, e.g. "
+                            "//tr[td[normalize-space()='Savings']]/td[@class='balance-cell']"
+                        ),
+                    },
+                    "css_selector": {
+                        "type": "string",
+                        "description": "CSS selector for scoped targeting, e.g. tr:has-text('Savings') .balance-cell",
+                    },
+                    "output_name": {
+                        "type": "string",
+                        "description": "The output_name key from the invocation contract to bind this value to.",
+                    },
                     "reasoning": {"type": "string"},
                 },
-                "required": ["description", "reasoning"],
+                "required": ["description", "output_name", "reasoning"],
             },
         },
     },
@@ -123,7 +142,7 @@ AGENT_TOOLS: list[dict] = [
                         "additionalProperties": {"type": "string"},
                     },
                 },
-                "required": ["summary"],
+                "required": ["summary", "extracted_data"],
             },
         },
     },

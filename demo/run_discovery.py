@@ -117,7 +117,9 @@ async def _run(goal, url, output, param_specs, output_spec_list,
         sensitive_values=sensitive_values,
     )
 
-    session = BrowserSession(headless=headless, cdp_port=cdp_port, trace_dir=ev_dir)
+    has_sensitive = any(p.sensitive for p in param_specs)
+    session = BrowserSession(headless=headless, cdp_port=cdp_port, trace_dir=ev_dir,
+                             capture_snapshots=not has_sensitive)
     await session.start()
 
     escalation = EscalationHandler(interactive=interactive, logger=logger)

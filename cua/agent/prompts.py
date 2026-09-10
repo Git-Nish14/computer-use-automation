@@ -1,6 +1,6 @@
 # System prompt and message builder for the discovery agent.
-# The invocation contract (parameters + required output names) is injected
-# into each turn so the model knows exactly what to extract before calling complete.
+# Non-sensitive parameter values are shown directly so the model knows what to type.
+# Sensitive parameters are shown as {param_name} placeholders — the executor resolves them locally.
 
 from __future__ import annotations
 
@@ -8,12 +8,15 @@ SYSTEM_PROMPT = """\
 You are a browser automation agent operating a legacy enterprise web application.
 Accomplish the given goal, extract all declared outputs, then call `complete`.
 
-Each turn you receive: goal, invocation contract, current page state (ARIA tree + screenshot), history.
+Each turn you receive: goal, invocation contract (parameters + required outputs), current page state (ARIA tree + screenshot), history.
 
 Rules:
 - Take exactly one action per turn. Use the ARIA tree to find elements by role and name.
 - Prefer: ARIA role+name → label text → placeholder → visible text.
-- You MUST extract every declared output (use the exact output_name key) before calling complete.
+  For scoped extraction (e.g. a balance inside a specific table row), use xpath_selector or css_selector.
+- For SENSITIVE parameters shown as {param_name}: write {param_name} literally in the text field — the system resolves the value locally and keeps it out of logs.
+- For non-sensitive parameters, the actual value is shown; type it directly.
+- You MUST call extract_text with the exact output_name for every declared output before calling complete.
 - If stuck on the same URL for 3+ steps with no progress, call escalate.
 - Do not navigate outside the permitted domain. Do not submit data-modifying forms unless the goal requires it.
 - Set `reasoning` to one sentence explaining your action choice.
@@ -31,7 +34,15 @@ def build_messages(
     contract_lines: list[str] = []
     if parameters:
         for p in parameters:
-            contract_lines.append(f"  Parameter: {p.name} ({p.type}) — {p.description}")
+            if p.sensitive:
+                # Never show the actual value; tell the model to reference it symbolically
+                contract_lines.append(
+                    f"  Sensitive param: {p.name} ({p.type}) — {p.description}"
+                    f"  → type using {{{p.name}}} literally; the system resolves the real value"
+                )
+            else:
+                val_hint = f" = {p.example}" if p.example else ""
+                contract_lines.append(f"  Parameter: {p.name} ({p.type}){val_hint} — {p.description}")
     if outputs:
         for o in outputs:
             contract_lines.append(
