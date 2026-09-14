@@ -7,7 +7,7 @@ import asyncio
 import json
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import click
@@ -56,7 +56,7 @@ def main(artifact, param_pairs, params_json, headless, allow_high_risk,
     headless = headless or os.environ.get("BROWSER_HEADLESS", "false").lower() == "true"
     cdp_port = int(os.environ.get("BROWSER_CDP_PORT", "9222"))
 
-    run_ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    run_ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     ev_dir = Path(evidence_dir) / f"replay_{run_ts}"
     ev_dir.mkdir(parents=True, exist_ok=True)
 

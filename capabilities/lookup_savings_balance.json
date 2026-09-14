@@ -1,8 +1,8 @@
 {
   "schema_version": "1.0",
-  "id": "a3f8c2d1-7b4e-4a2f-9c5d-8e1b6f3a0d27",
-  "name": "log_in_and_look_up_member_then_read_their_savings_balance",
-  "description": "Logs in, searches for a member by ID, opens their detail page, and reads the Savings account balance.",
+  "id": "2320b85d-591e-4ddb-94e2-d4ec1ad0da4b",
+  "name": "log_in_with_username_demo_navigate_to_member_search_look_up_",
+  "description": "Looked up member 12345 and extracted the Savings account balance.",
   "target": {
     "entry_url": "http://127.0.0.1:5000",
     "surface_type": "web_legacy",
@@ -33,73 +33,81 @@
     {
       "name": "savings_balance",
       "type": "decimal",
-      "description": "The savings account balance (formatted currency string, e.g. '$8,750.00')",
-      "source_step_id": "step_09_extract_text"
+      "description": "The savings account balance",
+      "source_step_id": "step_10_extract_text"
     }
   ],
   "steps": [
     {
-      "id": "step_01_navigate",
-      "description": "Navigate to the login page",
-      "action": {
-        "type": "navigate",
-        "locator": null,
-        "value": null,
-        "url": "http://127.0.0.1:5000/login",
-        "timeout_ms": 10000,
-        "risk_level": "safe",
-        "output_name": null,
-        "error_handling": {"expected_outcomes": [], "recoverable_patterns": [], "fail_patterns": []}
-      },
-      "checkpoint": null
-    },
-    {
-      "id": "step_02_type_text",
-      "description": "Type username into the Username field",
+      "id": "step_01_type_text",
+      "description": "Enter the staff username",
       "action": {
         "type": "type",
         "locator": {
-          "primary": {"method": "aria_label", "value": "Username:", "role": null, "exact": false},
-          "fallbacks": [{"method": "placeholder", "value": "username", "role": null, "exact": false}],
-          "rationale": "Label text 'Username:'"
+          "primary": {
+            "method": "aria_role",
+            "value": "Username:",
+            "role": "textbox",
+            "exact": false
+          },
+          "fallbacks": [],
+          "rationale": "ARIA role='textbox' name='Username:'"
         },
         "value": "demo",
         "url": null,
         "timeout_ms": 10000,
         "risk_level": "moderate",
         "output_name": null,
-        "error_handling": {"expected_outcomes": [], "recoverable_patterns": [], "fail_patterns": []}
+        "error_handling": {
+          "expected_outcomes": [],
+          "recoverable_patterns": [],
+          "fail_patterns": []
+        }
       },
       "checkpoint": null
     },
     {
-      "id": "step_03_type_text",
-      "description": "Type password into the Password field",
+      "id": "step_02_type_text",
+      "description": "Enter the staff login password",
       "action": {
         "type": "type",
         "locator": {
-          "primary": {"method": "aria_label", "value": "Password:", "role": null, "exact": false},
+          "primary": {
+            "method": "aria_role",
+            "value": "Password:",
+            "role": "textbox",
+            "exact": false
+          },
           "fallbacks": [],
-          "rationale": "Label text 'Password:'"
+          "rationale": "ARIA role='textbox' name='Password:'"
         },
         "value": "{login_password}",
         "url": null,
         "timeout_ms": 10000,
         "risk_level": "moderate",
         "output_name": null,
-        "error_handling": {"expected_outcomes": [], "recoverable_patterns": [], "fail_patterns": []}
+        "error_handling": {
+          "expected_outcomes": [],
+          "recoverable_patterns": [],
+          "fail_patterns": []
+        }
       },
       "checkpoint": null
     },
     {
-      "id": "step_04_click",
-      "description": "Click Log In to submit credentials",
+      "id": "step_03_click",
+      "description": "Submit the staff login form",
       "action": {
         "type": "click",
         "locator": {
-          "primary": {"method": "aria_role", "value": "Log In", "role": "button", "exact": false},
-          "fallbacks": [{"method": "text", "value": "Log In", "role": null, "exact": false}],
-          "rationale": "ARIA role=button name='Log In'"
+          "primary": {
+            "method": "aria_role",
+            "value": "Log In",
+            "role": "button",
+            "exact": false
+          },
+          "fallbacks": [],
+          "rationale": "ARIA role='button' name='Log In'"
         },
         "value": null,
         "url": null,
@@ -107,21 +115,33 @@
         "risk_level": "safe",
         "output_name": null,
         "error_handling": {
-          "expected_outcomes": [],
-          "recoverable_patterns": ["Please wait", "Loading"],
-          "fail_patterns": ["Invalid username or password", "500 Internal Server Error"]
+          "expected_outcomes": [
+            {
+              "code": "member_not_found",
+              "description": "Member not found",
+              "detection_pattern": "No members found"
+            },
+            {
+              "code": "record_not_found",
+              "description": "Record does not exist",
+              "detection_pattern": "not found"
+            }
+          ],
+          "recoverable_patterns": [
+            "Please wait",
+            "Loading"
+          ],
+          "fail_patterns": [
+            "500 Internal Server Error",
+            "Application Error"
+          ]
         }
       },
-      "checkpoint": {
-        "description": "Redirected to dashboard after login",
-        "type": "url_contains",
-        "target": "/dashboard",
-        "expected_value": null
-      }
+      "checkpoint": null
     },
     {
-      "id": "step_05_navigate",
-      "description": "Navigate to the member search page",
+      "id": "step_06_navigate",
+      "description": "The dashboard exposes two identically named links, so I am navigating directly to the permitted member search URL.",
       "action": {
         "type": "navigate",
         "locator": null,
@@ -130,64 +150,73 @@
         "timeout_ms": 10000,
         "risk_level": "safe",
         "output_name": null,
-        "error_handling": {"expected_outcomes": [], "recoverable_patterns": [], "fail_patterns": []}
+        "error_handling": {
+          "expected_outcomes": [
+            {
+              "code": "member_not_found",
+              "description": "Member not found",
+              "detection_pattern": "No members found"
+            },
+            {
+              "code": "record_not_found",
+              "description": "Record does not exist",
+              "detection_pattern": "not found"
+            }
+          ],
+          "recoverable_patterns": [
+            "Please wait",
+            "Loading"
+          ],
+          "fail_patterns": [
+            "500 Internal Server Error",
+            "Application Error"
+          ]
+        }
       },
       "checkpoint": null
     },
     {
-      "id": "step_06_type_text",
-      "description": "Enter the member ID into the search field",
+      "id": "step_07_type_text",
+      "description": "Enter the member ID to search",
       "action": {
         "type": "type",
         "locator": {
-          "primary": {"method": "aria_label", "value": "Member ID:", "role": null, "exact": false},
+          "primary": {
+            "method": "aria_role",
+            "value": "Member ID:",
+            "role": "textbox",
+            "exact": false
+          },
           "fallbacks": [],
-          "rationale": "Label text 'Member ID:'"
+          "rationale": "ARIA role='textbox' name='Member ID:'"
         },
         "value": "{member_id}",
         "url": null,
         "timeout_ms": 10000,
         "risk_level": "moderate",
         "output_name": null,
-        "error_handling": {"expected_outcomes": [], "recoverable_patterns": [], "fail_patterns": []}
-      },
-      "checkpoint": null
-    },
-    {
-      "id": "step_07_click",
-      "description": "Click Search to find the member",
-      "action": {
-        "type": "click",
-        "locator": {
-          "primary": {"method": "aria_role", "value": "Search", "role": "button", "exact": false},
-          "fallbacks": [{"method": "text", "value": "Search", "role": null, "exact": false}],
-          "rationale": "ARIA role=button name='Search'"
-        },
-        "value": null,
-        "url": null,
-        "timeout_ms": 10000,
-        "risk_level": "safe",
-        "output_name": null,
         "error_handling": {
-          "expected_outcomes": [
-            {"code": "member_not_found", "description": "Member not in system", "detection_pattern": "No members found"},
-            {"code": "record_not_found", "description": "Requested record does not exist", "detection_pattern": "not found"}
-          ],
-          "recoverable_patterns": ["Please wait", "Loading"],
-          "fail_patterns": ["500 Internal Server Error", "Application Error"]
+          "expected_outcomes": [],
+          "recoverable_patterns": [],
+          "fail_patterns": []
         }
       },
       "checkpoint": null
     },
     {
       "id": "step_08_click",
-      "description": "Click View Detail to open the member account page",
+      "description": "Search for member 12345",
       "action": {
         "type": "click",
         "locator": {
-          "primary": {"method": "text", "value": "View Detail", "role": null, "exact": false},
+          "primary": {
+            "method": "aria_role",
+            "value": "Search",
+            "role": "button",
+            "exact": false
+          },
           "fallbacks": [],
-          "rationale": "Visible text 'View Detail' — unique in search results when a single member matches"
+          "rationale": "ARIA role='button' name='Search'"
         },
         "value": null,
         "url": null,
@@ -196,64 +225,130 @@
         "output_name": null,
         "error_handling": {
           "expected_outcomes": [
-            {"code": "member_not_found", "description": "Member not found", "detection_pattern": "No members found"}
+            {
+              "code": "member_not_found",
+              "description": "Member not found",
+              "detection_pattern": "No members found"
+            },
+            {
+              "code": "record_not_found",
+              "description": "Record does not exist",
+              "detection_pattern": "not found"
+            }
           ],
-          "recoverable_patterns": ["Please wait", "Loading"],
-          "fail_patterns": ["500 Internal Server Error", "Application Error"]
+          "recoverable_patterns": [
+            "Please wait",
+            "Loading"
+          ],
+          "fail_patterns": [
+            "500 Internal Server Error",
+            "Application Error"
+          ]
         }
       },
-      "checkpoint": {
-        "description": "Landed on the correct member's detail page",
-        "type": "url_contains",
-        "target": "/members/{member_id}",
-        "expected_value": null
-      }
+      "checkpoint": null
     },
     {
-      "id": "step_09_extract_text",
-      "description": "Extract the savings account balance from the accounts table",
+      "id": "step_09_click",
+      "description": "Open member 12345 details",
+      "action": {
+        "type": "click",
+        "locator": {
+          "primary": {
+            "method": "aria_role",
+            "value": "View Detail",
+            "role": "link",
+            "exact": false
+          },
+          "fallbacks": [],
+          "rationale": "ARIA role='link' name='View Detail'"
+        },
+        "value": null,
+        "url": null,
+        "timeout_ms": 10000,
+        "risk_level": "safe",
+        "output_name": null,
+        "error_handling": {
+          "expected_outcomes": [
+            {
+              "code": "member_not_found",
+              "description": "Member not found",
+              "detection_pattern": "No members found"
+            },
+            {
+              "code": "record_not_found",
+              "description": "Record does not exist",
+              "detection_pattern": "not found"
+            }
+          ],
+          "recoverable_patterns": [
+            "Please wait",
+            "Loading"
+          ],
+          "fail_patterns": [
+            "500 Internal Server Error",
+            "Application Error"
+          ]
+        }
+      },
+      "checkpoint": null
+    },
+    {
+      "id": "step_10_extract_text",
+      "description": "Read the savings account current balance",
       "action": {
         "type": "extract",
         "locator": {
           "primary": {
             "method": "xpath",
-            "value": "//tr[td[normalize-space()='Savings']]/td[@class='balance-cell']",
+            "value": "//tr[td[normalize-space()='Savings']]/td[3]",
             "role": null,
             "exact": false
           },
-          "fallbacks": [
-            {"method": "css", "value": "tr:has-text('Savings') .balance-cell", "role": null, "exact": false}
-          ],
-          "rationale": "XPath scoped to the Savings row — avoids selecting the Checking row's balance-cell element"
+          "fallbacks": [],
+          "rationale": "XPath for scoped extraction: //tr[td[normalize-space()='Savings']]/td[3]"
         },
         "value": null,
         "url": null,
         "timeout_ms": 10000,
         "risk_level": "safe",
         "output_name": "savings_balance",
-        "error_handling": {"expected_outcomes": [], "recoverable_patterns": [], "fail_patterns": []}
+        "error_handling": {
+          "expected_outcomes": [],
+          "recoverable_patterns": [],
+          "fail_patterns": []
+        }
       },
       "checkpoint": null
     }
   ],
   "checkpoint": {
-    "description": "On the correct member's detail page with balance extracted",
+    "description": "Goal accomplished: Looked up member 12345 and extracted the Savings account balance.",
     "type": "url_contains",
     "target": "/members/{member_id}",
     "expected_value": null
   },
   "safety": {
-    "permitted_domains": ["127.0.0.1"],
-    "permitted_action_types": ["navigate", "click", "type", "extract", "wait"],
+    "permitted_domains": [
+      "127.0.0.1"
+    ],
+    "permitted_action_types": [
+      "click",
+      "navigate",
+      "extract",
+      "type"
+    ],
     "max_steps": 50,
     "requires_human_approval_for": [],
-    "sensitive_param_names": ["login_password"]
+    "sensitive_param_names": [
+      "login_password"
+    ]
   },
   "metadata": {
-    "created_at": "2025-09-09T12:03:47.821Z",
-    "discovery_run_id": "a3f8c2d1",
+    "created_at": "2026-09-14T20:49:44.613911Z",
+    "discovery_run_id": "59ffbc79",
     "model_used": "gpt-5.6-luna",
-    "discovery_duration_s": 43.7,
+    "discovery_duration_s": 25.15,
     "schema_version": "1.0"
   }
 }

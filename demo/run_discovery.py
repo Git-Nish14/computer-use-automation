@@ -7,7 +7,7 @@ import asyncio
 import os
 import re
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import click
@@ -92,7 +92,7 @@ def main(
     if not permitted_domains:
         permitted_domains = (urlparse(url).netloc,)
 
-    run_ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    run_ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     ev_dir = Path(evidence_dir) / f"discovery_{run_ts}"
     ev_dir.mkdir(parents=True, exist_ok=True)
 

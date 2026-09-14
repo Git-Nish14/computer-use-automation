@@ -1,0 +1,13 @@
+{"ts": "2026-09-14T20:56:10.796364+00:00", "run_id": "replay", "event": "run_start", "goal": "Looked up member 12345 and extracted the Savings account balance.", "params": {"member_id": "99999", "login_password": "[REDACTED]"}}
+{"ts": "2026-09-14T20:56:11.361439+00:00", "run_id": "replay", "event": "step_start", "step_id": "step_01_type_text", "description": "Enter the staff username", "action": "type"}
+{"ts": "2026-09-14T20:56:11.454241+00:00", "run_id": "replay", "event": "step_success", "step_id": "step_01_type_text", "extracted": null}
+{"ts": "2026-09-14T20:56:11.455950+00:00", "run_id": "replay", "event": "step_start", "step_id": "step_02_type_text", "description": "Enter the staff login password", "action": "type"}
+{"ts": "2026-09-14T20:56:11.490337+00:00", "run_id": "replay", "event": "step_success", "step_id": "step_02_type_text", "extracted": null}
+{"ts": "2026-09-14T20:56:11.491627+00:00", "run_id": "replay", "event": "step_start", "step_id": "step_03_click", "description": "Submit the staff login form", "action": "click"}
+{"ts": "2026-09-14T20:56:12.185238+00:00", "run_id": "replay", "event": "step_success", "step_id": "step_03_click", "extracted": null}
+{"ts": "2026-09-14T20:56:12.187772+00:00", "run_id": "replay", "event": "step_start", "step_id": "step_06_navigate", "description": "The dashboard exposes two identically named links, so I am navigating directly to the permitted member search URL.", "action": "navigate"}
+{"ts": "2026-09-14T20:56:12.781758+00:00", "run_id": "replay", "event": "step_success", "step_id": "step_06_navigate", "extracted": null}
+{"ts": "2026-09-14T20:56:12.782941+00:00", "run_id": "replay", "event": "step_start", "step_id": "step_07_type_text", "description": "Enter the member ID to search", "action": "type"}
+{"ts": "2026-09-14T20:56:12.832412+00:00", "run_id": "replay", "event": "step_success", "step_id": "step_07_type_text", "extracted": null}
+{"ts": "2026-09-14T20:56:12.833475+00:00", "run_id": "replay", "event": "step_start", "step_id": "step_08_click", "description": "Search for member 12345", "action": "click"}
+{"ts": "2026-09-14T20:56:13.597970+00:00", "run_id": "replay", "event": "business_outcome", "code": "member_not_found", "description": "Member not found"}
